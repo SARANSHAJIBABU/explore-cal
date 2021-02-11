@@ -29,7 +29,7 @@ getFirstOrRecentCommitHash() {
       git rev-parse HEAD
   fi
 }
-
+#test
 generateChangeLog() {
   [ ! -d .git ] && { echo "Not  a valid git repo."; return 1;}
 
