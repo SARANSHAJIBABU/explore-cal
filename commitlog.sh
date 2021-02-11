@@ -1,8 +1,13 @@
-#!/bin/sh
+#!/bin/bash
 
 changeFile="mychangelog.md"
 nl="
 "
+message="fix: Fix broken button\n"
+
+getCurrentBranchName(){
+  git branch --show-current
+}
 
 # Platform dependent
 getCurrentVersion() {
@@ -16,7 +21,7 @@ generateLog() {
   git log --pretty=format:"%s" "$commitRange"
 }
 
-getCommitHash() {
+getFirstOrRecentCommitHash() {
   type=$1
   if [ "$type" = "first" ] ; then
       git log --oneline | tail -1 | cut -d " " -f 1
@@ -29,20 +34,17 @@ generateChangeLog() {
   [ ! -d .git ] && { echo "Not  a valid git repo."; return 1;}
 
   latestTag=$(getTags | head -1)
-  echo $latestTag
+  echo "$latestTag"
 }
 
 filterMajorCommits() {
     args="-e" # "-v" to return not major commit
     [ "$1" ] && args="${1}e"
 
-    grep "$args" "^[A-z]*!: " \
-        -e "^[A-z]*(.*)!: " \
-        -e "^[*-] *[A-z]*!: " \
-        -e "^[*-] *[A-z]*(.*)!: " \
-        -e "^BREAKING[ -]CHANGE: " \
-        -e "^[*-] *BREAKING[ -]CHANGE: " \
-        -e "^BREAKING[ -]CHANGE"
+    grep -i "$args" "^major: " \
+        -e "^major(.*): " \
+        -e "^[*-] *major: "\
+        -e "^[*-] *major(.*): "
 }
 
 filterMinorCommits() {
@@ -65,7 +67,7 @@ filterPatchCommits() {
         -e "^[*-] *fix(.*): "
 }
 
-fmt_conv_type() {
+formatCommitTypes() {
     sed -e "s|^[A-z]*: \(.*$\)|\1|g" \
         -e "s|^[A-z]*(\(.*\)): \(.*$\)|\2 for \1|g" \
         -e "s|^[*-] *[A-z]*: \(.*$\)|\1|g" \
@@ -73,13 +75,10 @@ fmt_conv_type() {
         -e "s|^[A-z]*!: \(.*$\)|\1|g" \
         -e "s|^[A-z]*(\(.*\))!: \(.*$\)|\2 for \1|g" \
         -e "s|^[*-] *[A-z]*!: \(.*$\)|\1|g" \
-        -e "s|^[*-] *[A-z]*(\(.*\))!: \(.*$\)|\2 for \1|g" \
-        -e "s|^BREAKING[ -]CHANGE: \(.*$\)|\1|g" \
-        -e "s|^[*-] *BREAKING[ -]CHANGE: \(.*$\)|\1|g" \
-        -e "s|^BREAKING[ -]CHANGE|a breaking change|g"
+        -e "s|^[*-] *[A-z]*(\(.*\))!: \(.*$\)|\2 for \1|g"
 }
 
-generateFormattedLogs() {
+arrangeCommitLogs() {
   commits=$1
 
   #Filter major
@@ -112,7 +111,6 @@ formatCommits() {
 
       if [ -z "$header" ] ; then
         first_char=$(echo "$commit" | cut -c 1 | tr "[:lower:]" "[:upper:]")
-
         echo "$commit" | sed -e "s|^.\(.*$\)|- $first_char\1.|"
       else
         echo "$commit"
@@ -121,21 +119,27 @@ formatCommits() {
     done
 }
 
+replaceLogs(){
+  logsToPrint=$1
+  regex=$2
+  sed -i.backup -e "$regex" "$changeFile" && rm "${changeFile}.backup"
+  echo "$logsToPrint" | cat - "$changeFile" > temp && mv temp "$changeFile"
+}
 
 #Get current hash
-commitHashCurrent=$(getCommitHash "cur")
+commitHashCurrent=$(getFirstOrRecentCommitHash "cur")
 
 #Get latest first hash in the branch
-commitHashFirst=$(getCommitHash "first")
+commitHashFirst=$(getFirstOrRecentCommitHash "first")
 
 #Generate all commit hashes
 commits=$(generateLog "$commitHashCurrent" "$commitHashFirst")
 
-echo "$commits" > commits.txt
+commits="$message$commits"
 
-formattedLogs=$(generateFormattedLogs "$commits" | fmt_conv_type)
+formattedLogs=$(arrangeCommitLogs "$commits" | formatCommitTypes)
 
-toprint="# Changelog
+logsToPrint="# Changelog
 
 ## [$(getCurrentVersion)]
 
@@ -144,15 +148,11 @@ $(formatCommits "$formattedLogs")
 
 if [ ! -e $changeFile ]; then
   echo "no changelog => create and append"
-  echo "$toprint"  > "$changeFile"
+  echo "$logsToPrint"  > "$changeFile"
 elif grep -q "$(getCurrentVersion)" "$changeFile"  ; then
     echo "changelog exist. current version exist => overwrite"
-    regex="/^.*Changelog/,/^\*/d"
-    sed -i.backup -e "$regex" "$changeFile" && rm "${changeFile}.backup"
-    echo "$toprint" | cat - "$changeFile" > temp && mv temp "$changeFile"
+    replaceLogs "$logsToPrint" "/^.*Changelog/,/^\*/d"
 else
     echo "changelog exist. new version => append"
-    regex="/^.*Changelog/d"
-    sed -i.backup -e "$regex" "$changeFile" && rm "${changeFile}.backup"
-    echo "$toprint" | cat - "$changeFile" > temp && mv temp "$changeFile"
+    replaceLogs "$logsToPrint" "/^.*Changelog/d"
 fi
